@@ -1,74 +1,79 @@
+🚀 폐쇄망 Dify AI 서비스 구축 가이드
+본 문서는 외부망과 차단된 On-premise 환경(Rocky Linux 8.10)에서 Dify, Ollama, GPU 인프라를 성공적으로 구축하기 위한 마스터 가이드입니다.
 
-반영 스펙
+🛠️ 1. 시스템 환경 (Target System)
+OS: Rocky Linux 8.10 (x86_64)
 
-## 시스템 스펙
+GPU: NVIDIA 지원 환경 (Driver 595.71 / CUDA 13.2.1)
 
-- **OS**: Rocky Linux 8.10  
-- **CPU**: Intel Core Ultra 9 285 (24코어)  
-- **RAM**: 125GB 🔥  
-- **디스크**:  
-  - NVMe 954GB  
-  - NVMe 1.9TB  
-- **홈 디렉토리 여유공간**: 772GB  
-- **GPU**: NVIDIA (드라이버 미설치)
------------------------------------------
+핵심 스택: Docker (CE 26.1.3), Ollama, Dify (vMain), BGE-M3 Embedding
 
+📦 2. USB 반입 물자 리스트 (Checklist)
+⚠️ 주의: 파일 시스템은 반드시 NTFS로 포맷되어 있어야 합니다. (8GB 이상의 대용량 파일 포함)
 
-### 🔗 3단계: 화면 접속 및 모델 연동
+A. 인프라 및 의존성
+[ ] Rocky-8.10-x86_64-dvd1.iso: 의존성 해결용 로컬 레포지토리 원본
 
-모든 엔진이 리눅스(WSL) 안에서 돌아가고 있습니다. 이제 화면을 띄워 연결할 차례입니다.
+[ ] NVIDIA-Linux-x86_64-595.71.05.run: GPU 드라이버
 
-1.  **브라우저 접속**: Windows에서 크롬이나 엣지를 열고 주소창에 `http://localhost`를 입력합니다.
-2.  **초기 설정**: Dify 관리자 계정을 생성하고 로그인합니다.
-3.  **모델 연동**: 우측 상단 프로필 클릭 ➡ **Settings** ➡ **Model Provider** ➡ **Ollama**를 선택합니다.
-    *   **LLM 연동**:
-        *   Model Name: `qwen2.5:0.5b`
-        *   Base URL: `http://host.docker.internal:11434` (Docker Desktop 환경에서 WSL과 통신하는 만능 주소입니다)
-        *   Model Type: `Chat`
-    *   **임베딩 연동** (Ollama 항목에서 'Add Model'을 한 번 더 누릅니다):
-        *   Model Name: `bge-m3`
-        *   Base URL: `http://host.docker.internal:11434`
-        *   Model Type: `Text Embedding`
+[ ] cuda_13.2.1_595.58.03_linux.run: CUDA 툴킷
 
-이제 상단의 **'Knowledge'** 메뉴로 이동해 텍스트 파일을 업로드(임베딩 테스트) 해보시거나, **'Studio'** 메뉴에서 챗봇을 만들어좋습니다! 개인 Windows 노트북과 WSL(Windows Subsystem for Linux)을 활용하여, **인터넷이 완전히 차단된 폐쇄망 리눅스 서버**에 설치하는 과정을 100% 똑같이 모의 훈련하는 풀(Full) 가이드입니다.
+B. Docker 엔진 (docker_rpms 폴더)
+[ ] containerd.io, docker-ce, docker-ce-cli, docker-buildx-plugin, docker-compose-plugin (총 5개)
 
-Windows의 `C:\` 드라이브에 폴더를 만드는 것이, 리눅스 서버에 USB를 꽂는(`/mnt/c/`) 것과 완벽히 동일한 환경을 제공합니다. 노트북 사양을 고려해 **가장 가벼운 0.5B 모델**을 기준으로 진행합니다.
+[ ] (선택적) nvidia-container-toolkit 관련 RPM (보험용)
 
-### 📦 1단계: [온라인] 가상 USB 폴더에 파일 모으기 (Windows 환경)
+C. 애플리케이션 및 모델
+[ ] dify_images.tar: Dify 도커 이미지 통합 팩
 
-가장 먼저 Windows 바탕화면이나 C드라이브 최상단에 **`OFFLINE_USB`**라는 폴더를 만듭니다. (경로 예: `C:\OFFLINE_USB`)
-인터넷이 연결된 상태에서 아래 파일들을 이 폴더 안에 모두 모아주세요.
+[ ] dify-main.zip: Dify 소스코드 및 설정 파일
 
-**1. AI 모델 파일 (Hugging Face)**
-*   **LLM (Qwen 0.5B)**: [이곳](https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/tree/main)에서 `qwen2.5-0.5b-instruct-q4_k_m.gguf` 파일을 다운로드합니다. (약 400MB)
-*   **임베딩 (BGE-M3)**: [이곳](https://huggingface.co/bge-m3-gguf/tree/main)에서 `bge-m3-q4_k_m.gguf` 파일을 다운로드합니다. (약 2GB)
+[ ] ollama-linux-amd64.tar.zst: Ollama 바이너리 (Host 설치용)
 
-**2. Ollama 리눅스 엔진**
-*   [Ollama GitHub Releases](https://github.com/ollama/ollama/releases)에 접속합니다.
-*   **`ollama-linux-amd64`** 파일을 다운로드합니다. (Windows용 `.exe`가 아닙니다!)
+[ ] bge-m3-Q4_K_M.gguf: 임베딩 모델
 
-**3. Dify 소스 및 도커 이미지 추출**
-*(※ 노트북에 Docker Desktop이 설치되어 있고 실행 중이어야 합니다.)*
-*   [Dify GitHub](https://github.com/langgenius/dify)에서 `Code -> Download ZIP`을 눌러 소스를 받고, `OFFLINE_USB` 폴더 안에 압축을 풉니다. (폴더명이 `dify` 또는 `dify-main`이 됩니다.)
-*   Windows 터미널(CMD 또는 PowerShell)을 열고 아래 명령어를 입력해 이미지를 굽습니다.
-    ```powershell
-    # 압축을 푼 Dify의 docker 폴더로 이동
-    cd C:\OFFLINE_USB\dify-main\docker
-    
-    # 이미지 다운로드
-    docker compose pull
-    
-    # 다운받은 이미지를 하나의 파일로 묶기 (OFFLINE_USB 폴더에 저장)
-    docker save -o C:\OFFLINE_USB\dify_images.tar $(docker images -q)
-    ```
+🚀 3. 설치 절차 (Deployment Steps)
+STEP 1. 로컬 레포지토리 구축 (의존성 지옥 탈출)
+인터넷이 안 되므로 ISO 파일을 서버에 마운트하여 dnf가 내부에서 패키지를 찾도록 설정합니다.
 
----
+Bash
+sudo mkdir -p /mnt/rocky-iso
+sudo mount -o loop ./Rocky-8.10-x86_64-dvd1.iso /mnt/rocky-iso
 
-### 🚀 2단계: [오프라인 모의 훈련] WSL 리눅스 터미널 설치
+# /etc/yum.repos.d/rocky-local.repo 작성 (AppStream, BaseOS 경로 설정)
+STEP 2. GPU 인프라 및 Docker 설치
+NVIDIA 드라이버 및 CUDA 설치 (.run 파일 실행)
 
-이제 진짜 폐쇄망에 들어왔다고 가정합니다. (원하신다면 노트북 와이파이를 끄셔도 좋습니다.)
-**WSL 터미널(Ubuntu 등)**을 실행하고 아래 리눅스 명령어를 순서대로 입력합니다.
+docker_rpms 폴더 내의 모든 파일을 dnf localinstall로 설치
 
-**1. 가상 USB 경로로 이동**
-```bash
-cd /mnt/c/OFFLINE_USB
+systemctl enable --now docker로 서비스 기동
+
+STEP 3. Dify 서비스 배포
+docker load -i dify_images.tar 명령어로 모든 이미지 로드
+
+/opt/dify-main에 소스 압축 해제 및 .env 설정
+
+docker compose up -d로 10여 개의 컨테이너 동시 기동
+
+STEP 4. AI 모델 엔진 설정 (Ollama)
+ollama-linux-amd64.tar.zst 압축 해제 후 /usr에 배치
+
+임베딩 모델(bge-m3) 생성을 위한 Modelfile 작성 및 ollama create 실행
+
+🔍 4. 주요 변경 및 특이사항 (History)
+설치 방식 변경: 바이너리(.tgz) 방식에서 OS 안정성과 보안(SELinux)을 고려한 RPM 설치 방식으로 전환.
+
+Docker Compose: 독립 실행 파일 대신 Docker의 공식 Plugin 방식(docker-compose-plugin) 채택. (명령어: docker compose 사용)
+
+의존성 해결: 개별 패키지 반입 대신 Full ISO를 반입하여 현장 에러 변수를 차단.
+
+Ollama 배치: GPU 통신 효율을 위해 Docker 내부가 아닌 Host OS 직접 설치 방식 선택.
+
+💡 5. 문제 해결 (Troubleshooting)
+포트 개방: 서비스 접속을 위해 80(Dify), 11434(Ollama) 포트 방화벽 해제 필수.
+
+권한 에러: 설치 과정 중 권한 에러 발생 시 sudo 권한 확인 및 SELinux 상태(sestatus) 점검.
+
+GPU 인식: nvidia-smi 명령어로 드라이버가 정상 작동하는지 확인 후 Ollama 기동.
+
+이 가이드는 영상 엔지니어님의 성공적인 반입과 구축을 기원하며 작성되었습니다. 현장에서 막히는 부분이 생기면 언제든 README.md를 다시 확인하세요! 파이팅입니다! 🚀
